@@ -169,20 +169,24 @@ def load_config(root: Path | None = None) -> AgentSyncConfig:
 
 
 def _parse_config_manual(config_path: Path, root: Path) -> AgentSyncConfig:
-    """Minimal TOML parser for Python 3.10 compatibility."""
+    """Minimal TOML parser for Python 3.10 compatibility. Handles multiline arrays."""
+    import re
+
     cfg = AgentSyncConfig(root=root)
     try:
         text = config_path.read_text(encoding="utf-8")
+
+        # Extract tools array — may span multiple lines: tools = [\n    "x",\n]
+        tools_match = re.search(r"tools\s*=\s*\[([^\]]*)\]", text, re.DOTALL)
+        if tools_match:
+            tools_block = tools_match.group(1)
+            tools = re.findall(r'"([^"]+)"', tools_block)
+            if tools:
+                cfg.tools = tools
+
         for line in text.splitlines():
             line = line.strip()
-            if line.startswith("tools"):
-                # Extract list of quoted strings
-                import re
-
-                tools = re.findall(r'"([^"]+)"', line)
-                if tools:
-                    cfg.tools = tools
-            elif line.startswith("canonical"):
+            if line.startswith("canonical"):
                 parts = line.split("=", 1)
                 if len(parts) == 2:
                     cfg.canonical = parts[1].strip().strip('"').strip("'")
