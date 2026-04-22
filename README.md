@@ -39,7 +39,7 @@ Every time you add a team member using a different tool, you create another file
 Edit one file. Run one command. Every tool gets the right format.
 
 ```bash
-pip install agentsync
+pip install rulesync
 agentsync init      # sets up .agentsync/rules.md
 agentsync sync      # generates all rule files
 ```
