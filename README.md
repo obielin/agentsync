@@ -40,12 +40,12 @@ Edit one file. Run one command. Every tool gets the right format.
 
 ```bash
 pip install rulesync
-agentsync init      # sets up .agentsync/rules.md
-agentsync sync      # generates all rule files
+rulesync init      # sets up .agentsync/rules.md
+rulesync sync      # generates all rule files
 ```
 
 ```
-agentsync sync
+rulesync sync
 --------------------------------------------------
   canonical: .agentsync/rules.md
   created:   7
@@ -66,7 +66,7 @@ agentsync sync
 ## Install
 
 ```bash
-pip install agentsync
+pip install rulesync
 ```
 
 Zero dependencies. Pure Python 3.10+.
@@ -78,19 +78,19 @@ Zero dependencies. Pure Python 3.10+.
 ```bash
 # 1. Initialise in your project
 cd my-project
-agentsync init
+rulesync init
 
 # 2. Edit the canonical rules file
 nano .agentsync/rules.md   # or your editor of choice
 
 # 3. Sync to all tools
-agentsync sync
+rulesync sync
 
 # 4. Check status any time
-agentsync status
+rulesync status
 
 # 5. Preview changes before writing
-agentsync sync --dry-run
+rulesync sync --dry-run
 ```
 
 ---
@@ -98,15 +98,15 @@ agentsync sync --dry-run
 ## Commands
 
 ```bash
-agentsync init              # initialise in current project
-agentsync sync              # sync all tool files from canonical source
-agentsync sync --dry-run    # preview what would change
-agentsync diff              # alias for sync --dry-run
-agentsync status            # check which files are out of sync
-agentsync add gemini_md     # add a new tool
-agentsync remove cursorrules  # remove a tool
-agentsync list              # list all 9 supported tools
-agentsync adopt             # adopt your existing rules as the canonical source
+rulesync init              # initialise in current project
+rulesync sync              # sync all tool files from canonical source
+rulesync sync --dry-run    # preview what would change
+rulesync diff              # alias for sync --dry-run
+rulesync status            # check which files are out of sync
+rulesync add gemini_md     # add a new tool
+rulesync remove cursorrules  # remove a tool
+rulesync list              # list all 9 supported tools
+rulesync adopt             # adopt your existing rules as the canonical source
 ```
 
 ---
@@ -129,12 +129,12 @@ agentsync adopt             # adopt your existing rules as the canonical source
 
 ## Migrating from existing files
 
-Already have a `CLAUDE.md` or `.cursorrules`? Use `agentsync adopt` to import the best existing file as the canonical source:
+Already have a `CLAUDE.md` or `.cursorrules`? Use `rulesync adopt` to import the best existing file as the canonical source:
 
 ```bash
-agentsync init
-agentsync adopt   # finds the most complete existing rule file and imports it
-agentsync sync    # regenerate all other files from the canonical source
+rulesync init
+rulesync adopt   # finds the most complete existing rule file and imports it
+rulesync sync    # regenerate all other files from the canonical source
 ```
 
 ---
@@ -169,7 +169,7 @@ Add to `.pre-commit-config.yaml`:
   hooks:
     - id: agentsync
       name: agentsync
-      entry: agentsync sync
+      entry: rulesync sync
       language: system
       pass_filenames: false
       always_run: true
@@ -184,11 +184,11 @@ Now every commit automatically regenerates your rule files if the canonical sour
 ```yaml
 - name: Check agent rules are in sync
   run: |
-    pip install agentsync
-    agentsync status
+    pip install rulesync
+    rulesync status
 ```
 
-`agentsync status` exits with code 1 if any files are stale or missing — perfect for PR checks.
+`rulesync status` exits with code 1 if any files are stale or missing — perfect for PR checks.
 
 ---
 
