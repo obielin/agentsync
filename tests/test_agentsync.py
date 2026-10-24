@@ -368,3 +368,40 @@ class TestAgentSyncer:
         syncer = AgentSyncer(root=project, verbose=True)
         report = syncer.sync()
         assert report.total > 0
+
+    def test_gitignore_adds_path_for_tool_added_later(self, tmp_path):
+        write_config(tmp_path, tools=["claude_md"])
+        write_rules(content=SAMPLE_RULES, root=tmp_path)
+        AgentSyncer(root=tmp_path).sync()
+        write_config(tmp_path, tools=["claude_md", "aider"])
+        AgentSyncer(root=tmp_path).sync()
+        AgentSyncer(root=tmp_path).sync()
+        lines = (tmp_path / ".gitignore").read_text().splitlines()
+        assert lines.count(".aider.conf.yml") == 1
+        assert lines.count("CLAUDE.md") == 1
+        assert lines.count("# agentsync generated files") == 1
+
+    def test_gitignore_drops_path_for_removed_tool(self, tmp_path):
+        write_config(tmp_path, tools=["claude_md", "aider"])
+        write_rules(content=SAMPLE_RULES, root=tmp_path)
+        AgentSyncer(root=tmp_path).sync()
+        write_config(tmp_path, tools=["claude_md"])
+        AgentSyncer(root=tmp_path).sync()
+        lines = (tmp_path / ".gitignore").read_text().splitlines()
+        assert ".aider.conf.yml" not in lines
+        assert "CLAUDE.md" in lines
+
+    def test_gitignore_preserves_user_lines(self, tmp_path):
+        user_before = "node_modules/\n.env\n"
+        user_after = "\n# my stuff\nbuild/\n"
+        (tmp_path / ".gitignore").write_text(
+            user_before + "\n# agentsync generated files\nCLAUDE.md\n.aider.conf.yml\n" + user_after
+        )
+        write_config(tmp_path, tools=["claude_md", "gemini_md"])
+        write_rules(content=SAMPLE_RULES, root=tmp_path)
+        AgentSyncer(root=tmp_path).sync()
+        content = (tmp_path / ".gitignore").read_text()
+        assert content.startswith(user_before)
+        assert content.endswith(user_after)
+        assert "# agentsync generated files\nCLAUDE.md\nGEMINI.md\n" in content
+        assert ".aider.conf.yml" not in content
