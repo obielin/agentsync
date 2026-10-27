@@ -190,6 +190,16 @@ Now every commit automatically regenerates your rule files if the canonical sour
 
 `rulesync status` exits with code 1 if any files are stale or missing — perfect for PR checks.
 
+Invalid `.agentsync/config.toml` files stop configuration-dependent commands with
+exit code 1 and an error naming the file. Fix the settings before syncing; invalid
+settings do not fall back to the default tool list. `rulesync init --tools` also
+rejects unknown or empty tool IDs before writing files, including with `--force`.
+
+Python 3.10's dependency-free configuration reader supports the generated format:
+simple tables and bare keys, single-line quoted strings, booleans, and string arrays
+(including multiline arrays and comments). It rejects unsupported syntax with an
+error; use Python 3.11+ for the full TOML syntax supported by `tomllib`.
+
 ---
 
 ## The canonical format

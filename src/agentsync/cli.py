@@ -35,15 +35,27 @@ def cmd_init(args) -> int:
         write_config,
         write_rules,
     )
-    from agentsync.tools import DEFAULT_TOOLS
+    from agentsync.tools import ALL_TOOLS, DEFAULT_TOOLS
 
     root = Path.cwd()
+
+    tools = (
+        [tool.strip() for tool in args.tools.split(",")]
+        if args.tools is not None
+        else DEFAULT_TOOLS
+    )
+    unknown = [tool for tool in tools if tool not in ALL_TOOLS]
+    if unknown:
+        print(
+            _err(f"Unknown tool IDs: {', '.join(repr(tool) for tool in unknown)}"), file=sys.stderr
+        )
+        print(f"Available tools: {', '.join(sorted(ALL_TOOLS))}", file=sys.stderr)
+        return 1
 
     if is_initialised(root) and not args.force:
         print(f"{_warn('Already initialised.')} Use --force to reinitialise.")
         return 0
 
-    tools = args.tools.split(",") if args.tools else DEFAULT_TOOLS
     write_config(root, tools=tools)
     write_rules(content=None, root=root)
 
@@ -302,7 +314,13 @@ Examples:
     p_adopt.set_defaults(func=cmd_adopt)
 
     args = p.parse_args()
-    result = args.func(args)
+    from agentsync.config import ConfigError
+
+    try:
+        result = args.func(args)
+    except ConfigError as exc:
+        print(_err(str(exc)), file=sys.stderr)
+        result = 1
     sys.exit(result if isinstance(result, int) else 0)
 
 
