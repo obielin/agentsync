@@ -122,7 +122,7 @@ rulesync adopt             # adopt your existing rules as the canonical source
 | `copilot` | `.github/copilot-instructions.md` | GitHub Copilot |
 | `gemini_md` | `GEMINI.md` | Gemini CLI |
 | `windsurf` | `.windsurfrules` | Windsurf |
-| `aider` | `.aider.conf.yml` | Aider |
+| `aider` | `.aider.conf.yml`, `CONVENTIONS.md` | Aider loads the generated conventions through `read` |
 | `opencode` | `AGENTS.md` | OpenCode (uses AGENTS.md) |
 
 ---

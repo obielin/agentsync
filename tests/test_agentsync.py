@@ -138,8 +138,12 @@ class TestGenerators:
 
     def test_all_generators_preserve_content(self):
         for tool in ALL_TOOLS.values():
-            result = tool.generate(SAMPLE_RULES)
-            assert "Stack" in result or "stack" in result.lower()
+            for output_path in tool.output_paths:
+                result = tool.generate(SAMPLE_RULES, output_path=output_path)
+                if output_path == ".aider.conf.yml":
+                    assert "read: CONVENTIONS.md" in result
+                else:
+                    assert "Stack" in result or "stack" in result.lower()
 
     def test_generator_ends_with_newline(self):
         for tool in ALL_TOOLS.values():

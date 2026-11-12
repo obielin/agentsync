@@ -120,19 +120,25 @@ def _update_gitignore(root: Path, paths_to_ignore: list[str]) -> None:
     """Add generated paths to .gitignore if not already present."""
     gitignore_path = root / ".gitignore"
     marker = "# agentsync generated files"
-    existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
-
-    if marker in existing:
+    existing = gitignore_path.read_bytes().decode("utf-8") if gitignore_path.exists() else ""
+    lines = existing.splitlines(keepends=True)
+    entries = [line.rstrip("\r\n") for line in lines]
+    additions = [path for path in dict.fromkeys(paths_to_ignore) if path not in entries]
+    if not additions:
         return
 
-    additions = ["\n", marker]
-    for p in paths_to_ignore:
-        if p not in existing:
-            additions.append(p)
-    additions.append("")
-
-    with gitignore_path.open("a", encoding="utf-8") as f:
-        f.write("\n".join(additions))
+    newline = "\r\n" if "\r\n" in existing else "\n"
+    if marker in entries:
+        insert_at = entries.index(marker) + 1
+        if not lines[insert_at - 1].endswith("\n"):
+            lines[insert_at - 1] += newline
+    else:
+        if existing:
+            lines.append(newline if existing.endswith("\n") else newline * 2)
+        lines.append(marker + newline)
+        insert_at = len(lines)
+    lines[insert_at:insert_at] = [path + newline for path in additions]
+    gitignore_path.write_bytes("".join(lines).encode("utf-8"))
 
 
 class AgentSyncer:
@@ -280,7 +286,7 @@ class AgentSyncer:
     ) -> SyncResult:
         abs_path = self.root / rel_path
         try:
-            generated = tool.generate(content)
+            generated = tool.generate(content, output_path=rel_path)
         except Exception as e:
             return SyncResult(
                 tool_id=tool.id,
