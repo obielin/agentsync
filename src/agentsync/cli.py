@@ -137,8 +137,19 @@ def cmd_diff(args) -> int:
     return 0
 
 
+def _save_tool_selection(root: Path, tools: list[str]) -> bool:
+    from agentsync.config import CONFIG_FILE, write_config
+
+    try:
+        write_config(root, tools=tools, preserve_existing=True)
+    except (OSError, SyntaxError, ValueError) as error:
+        print(_err(f"Could not update {root / CONFIG_FILE}: {error}"), file=sys.stderr)
+        return False
+    return True
+
+
 def cmd_add(args) -> int:
-    from agentsync.config import load_config, write_config
+    from agentsync.config import load_config
     from agentsync.tools import ALL_TOOLS
 
     tool_id = args.tool
@@ -155,7 +166,8 @@ def cmd_add(args) -> int:
         return 0
 
     cfg.tools.append(tool_id)
-    write_config(root, tools=cfg.tools, preserve_existing=True)
+    if not _save_tool_selection(root, cfg.tools):
+        return 1
     tool = ALL_TOOLS[tool_id]
     print(f"\n{_ok(f'Added {tool.name}')}")
     print(f"  Output: {', '.join(tool.output_paths)}")
@@ -164,7 +176,7 @@ def cmd_add(args) -> int:
 
 
 def cmd_remove(args) -> int:
-    from agentsync.config import load_config, write_config
+    from agentsync.config import load_config
 
     tool_id = args.tool
     root = Path.cwd()
@@ -175,7 +187,8 @@ def cmd_remove(args) -> int:
         return 0
 
     cfg.tools.remove(tool_id)
-    write_config(root, tools=cfg.tools, preserve_existing=True)
+    if not _save_tool_selection(root, cfg.tools):
+        return 1
     print(f"\n{_ok(f'Removed {tool_id!r} from configuration.')}")
     print("  Note: existing file was not deleted. Delete manually if needed.\n")
     return 0

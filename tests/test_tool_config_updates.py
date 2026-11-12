@@ -112,6 +112,52 @@ def test_add_preserves_multiline_strings_with_config_examples(tmp_path, monkeypa
     assert after.endswith(suffix)
 
 
+@pytest.mark.skipif(config_module.tomllib is None, reason="requires the native TOML parser")
+@pytest.mark.parametrize(
+    "content",
+    [
+        '[agentsync]\nextra = [\n  [1, 2]\n]\ntools = ["claude_md"]\n',
+        '["\\u0061gentsync"]\n"\\u0074ools" = ["claude_md"]\n',
+        'agentsync.tools = ["claude_md"]\n',
+        'agentsync = { tools = ["claude_md"], warn_unmanaged = false }\n',
+    ],
+)
+@pytest.mark.parametrize(
+    ("command", "tool", "expected_tools"),
+    [(cmd_add, "aider", ["claude_md", "aider"]), (cmd_remove, "claude_md", [])],
+)
+def test_tool_changes_preserve_alternate_toml_layouts(
+    tmp_path, monkeypatch, content, command, tool, expected_tools
+):
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / CONFIG_FILE
+    config_path.parent.mkdir()
+    config_path.write_text(content, encoding="utf-8")
+
+    assert command(argparse.Namespace(tool=tool)) == 0
+
+    result = config_path.read_text(encoding="utf-8")
+    expected = config_module.tomllib.loads(content)
+    expected["agentsync"]["tools"] = expected_tools
+    assert config_module.tomllib.loads(result) == expected
+    prefix, suffix = content.split('["claude_md"]')
+    assert result.startswith(prefix)
+    assert result.endswith(suffix)
+
+
+def test_fallback_leaves_unsupported_layout_untouched(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config_module, "tomllib", None)
+    config_path = tmp_path / CONFIG_FILE
+    config_path.parent.mkdir()
+    content = b'agentsync.tools = ["claude_md"]\r\n'
+    config_path.write_bytes(content)
+
+    assert cmd_add(argparse.Namespace(tool="aider")) == 1
+    assert config_path.read_bytes() == content
+    assert "Python 3.11" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "content", ["[agentsync]\nauto_gitignore = false\n", "[other]\nkeep = true\n"]
 )
