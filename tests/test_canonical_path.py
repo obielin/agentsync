@@ -79,6 +79,27 @@ def test_sync_uses_explicit_config_without_a_config_file(tmp_path):
     assert syncer.status()[0]["status"] == "stale"
 
 
+@pytest.mark.parametrize("canonical", [".github/copilot-instructions.md", "team.md"])
+def test_sync_never_writes_to_canonical_output(tmp_path, canonical):
+    output = tmp_path / ".github/copilot-instructions.md"
+    output.parent.mkdir()
+    output.write_text(CUSTOM_RULES, encoding="utf-8")
+    rules_path = tmp_path / canonical
+    if rules_path != output:
+        rules_path.hardlink_to(output)
+    config = AgentSyncConfig(root=tmp_path, canonical=canonical, tools=["copilot", "claude_md"])
+    syncer = AgentSyncer(root=tmp_path, config=config)
+
+    assert syncer.sync(dry_run=True).created == 1
+    assert not config.lock_path.exists()
+    assert syncer.sync().created == 1
+    assert syncer.sync().updated == 0
+    assert rules_path.read_text(encoding="utf-8") == CUSTOM_RULES
+    assert syncer.status() == [{"tool": "claude_md", "path": "CLAUDE.md", "status": "ok"}]
+    assert not syncer.detect_unmanaged()
+    assert output.relative_to(tmp_path).as_posix() not in (tmp_path / ".gitignore").read_text()
+
+
 @pytest.mark.parametrize("command", [cmd_sync, cmd_status, cmd_diff])
 def test_cli_accepts_custom_only_project(custom_project, monkeypatch, command):
     monkeypatch.chdir(custom_project)
