@@ -188,7 +188,16 @@ Now every commit automatically regenerates your rule files if the canonical sour
     rulesync status
 ```
 
-`rulesync status` exits with code 1 if any files are stale or missing — perfect for PR checks.
+`rulesync status` exits with code 1 if any files are stale, modified or missing.
+`modified` means a generated file differs from the last sync; review those local
+edits and move any rules you want to keep into the canonical source before syncing.
+A file with both local edits and outdated rules is shown as `modified` so the edits
+are not overlooked. `status` never changes files or the lock.
+
+Older lock files have no output hashes. If their canonical rules are unchanged,
+status compares existing text with the current generator's output. If the rules
+have changed, those files remain `stale` because the previous output cannot be
+reconstructed. The next real sync records output hashes for subsequent checks.
 
 ---
 

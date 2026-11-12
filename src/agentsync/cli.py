@@ -98,6 +98,9 @@ def cmd_status(args) -> int:
     for s in statuses:
         if s["status"] == "ok":
             print(f"  {_ok('[ok]')}      {s['path']}")
+        elif s["status"] == "modified":
+            print(f"  {_warn('[modified]')} {s['path']}  (review local edits before syncing)")
+            any_stale = True
         elif s["status"] == "stale":
             print(f"  {_warn('[stale]')}   {s['path']}  (run `agentsync sync`)")
             any_stale = True

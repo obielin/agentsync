@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +101,14 @@ class SyncReport:
 
 def _hash_content(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+
+def _output_bytes(content: str) -> bytes:
+    return content.replace("\n", os.linesep).encode("utf-8")
+
+
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
 def _read_lock(lock_path: Path) -> dict[str, Any]:
@@ -204,6 +213,9 @@ class AgentSyncer:
                 "canonical_hash": _hash_content(canonical_content),
                 "synced_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "tools": {r.output_path: _hash_content(canonical_content) for r in results if r.ok},
+                "output_hashes": {
+                    r.output_path: _hash_file(self.root / r.output_path) for r in results if r.ok
+                },
             }
             _write_lock(self.config.lock_path, new_lock)
 
@@ -225,7 +237,7 @@ class AgentSyncer:
         Check which generated files are out of sync with the canonical source.
 
         Returns:
-            List of dicts with tool_id, path, status
+            List of dicts with tool_id, path, status (ok, stale, modified or missing)
         """
         try:
             canonical_content = read_rules(self.root)
@@ -243,10 +255,20 @@ class AgentSyncer:
                 continue
             for rel_path in tool.output_paths:
                 abs_path = self.root / rel_path
+                output_hash = lock.get("output_hashes", {}).get(rel_path)
                 if not abs_path.exists():
                     statuses.append({"tool": tool_id, "path": rel_path, "status": "missing"})
+                elif output_hash is not None and _hash_file(abs_path) != output_hash:
+                    statuses.append({"tool": tool_id, "path": rel_path, "status": "modified"})
                 elif lock.get("tools", {}).get(rel_path) != canonical_hash:
                     statuses.append({"tool": tool_id, "path": rel_path, "status": "stale"})
+                elif output_hash is None:
+                    # Older locks only recorded the canonical hash. When that source is
+                    # unchanged, reconstruct the expected output without rewriting the lock.
+                    expected = _output_bytes(tool.generate(canonical_content))
+                    existing = abs_path.read_bytes()
+                    status = "ok" if existing == expected else "modified"
+                    statuses.append({"tool": tool_id, "path": rel_path, "status": status})
                 else:
                     statuses.append({"tool": tool_id, "path": rel_path, "status": "ok"})
 
@@ -280,7 +302,7 @@ class AgentSyncer:
     ) -> SyncResult:
         abs_path = self.root / rel_path
         try:
-            generated = tool.generate(content)
+            generated = _output_bytes(tool.generate(content))
         except Exception as e:
             return SyncResult(
                 tool_id=tool.id,
@@ -290,9 +312,7 @@ class AgentSyncer:
                 error=f"Generation failed: {e}",
             )
 
-        existing = (
-            abs_path.read_text(encoding="utf-8", errors="replace") if abs_path.exists() else None
-        )
+        existing = abs_path.read_bytes() if abs_path.exists() else None
 
         if existing == generated:
             return SyncResult(
@@ -304,7 +324,7 @@ class AgentSyncer:
 
         if not dry_run:
             abs_path.parent.mkdir(parents=True, exist_ok=True)
-            abs_path.write_text(generated, encoding="utf-8")
+            abs_path.write_bytes(generated)
 
         status = "created" if existing is None else "updated"
         return SyncResult(
