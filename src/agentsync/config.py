@@ -6,6 +6,9 @@ Zero external dependencies — uses stdlib tomllib (Python 3.11+) with fallback.
 
 from __future__ import annotations
 
+import ast
+import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -170,19 +173,20 @@ def load_config(root: Path | None = None) -> AgentSyncConfig:
 
 def _parse_config_manual(config_path: Path, root: Path) -> AgentSyncConfig:
     """Minimal TOML parser for Python 3.10 compatibility. Handles multiline arrays."""
-    import re
-
     cfg = AgentSyncConfig(root=root)
     try:
         text = config_path.read_text(encoding="utf-8")
 
-        # Extract tools array — may span multiple lines: tools = [\n    "x",\n]
-        tools_match = re.search(r"tools\s*=\s*\[([^\]]*)\]", text, re.DOTALL)
-        if tools_match:
-            tools_block = tools_match.group(1)
-            tools = re.findall(r'"([^"]+)"', tools_block)
-            if tools:
-                cfg.tools = tools
+        try:
+            section = _parse_editable_config(text).get("agentsync", {})
+        except (SyntaxError, ValueError):
+            # Keep the existing reader's best-effort behavior for complex files.
+            # The editor requires a complete parse before making any changes.
+            tools_match = re.search(r"tools\s*=\s*\[([^\]]*)\]", text, re.DOTALL)
+            if tools_match:
+                cfg.tools = re.findall(r'"([^"]+)"', tools_match.group(1))
+        else:
+            cfg.tools = section.get("tools", cfg.tools)
 
         for line in text.splitlines():
             line = line.strip()
@@ -214,23 +218,133 @@ def read_rules(root: Path | None = None) -> str:
     return rules_path.read_text(encoding="utf-8")
 
 
-def write_config(root: Path | None = None, tools: list[str] | None = None) -> None:
-    """Write a fresh config file."""
+_QUOTED_KEY = (
+    r"""(?:"(?:\\(?:["\\btnfr]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})|[^"\\\r\n])*"|'[^'\r\n]*')"""
+)
+_STRINGS = r'(?:"""(?:\\.|(?!""").)*"{3,5}' r"|'''(?:(?!''').)*'{3,5}" rf"|{_QUOTED_KEY})"
+_COMMENT = r"#[^\r\n]*"
+_ARRAY = rf"\[(?:{_STRINGS}|{_COMMENT}|[ \t\r\n,])*\]"
+_EDIT_TOKENS = re.compile(
+    rf"(?P<table>^[ \t]*\[[^\r\n]+\][ \t]*(?:{_COMMENT})?\r?$)"
+    rf"|(?<![A-Za-z0-9_-])(?:tools|{_QUOTED_KEY})[ \t]*=[ \t]*(?P<array>{_ARRAY})"
+    rf"|{_COMMENT}|{_STRINGS}",
+    re.MULTILINE | re.DOTALL,
+)
+_SIMPLE_KEY = rf"(?:[A-Za-z0-9_-]+|{_QUOTED_KEY})"
+_SIMPLE_ARRAY = rf"\[(?:{_QUOTED_KEY}|{_COMMENT}|[ \t\r\n,])*\]"
+_SIMPLE_LINE = re.compile(
+    rf"[ \t]*(?:\[(?P<table>{_SIMPLE_KEY})\]"
+    rf"|(?P<key>{_SIMPLE_KEY})[ \t]*=[ \t]*(?P<value>{_SIMPLE_ARRAY}|{_QUOTED_KEY}|true|false))?"
+    rf"[ \t]*(?:{_COMMENT})?(?:\r?\n|$)",
+    re.DOTALL,
+)
+_SIMPLE_ARRAY_ITEMS = re.compile(rf"(?P<string>{_QUOTED_KEY})|{_COMMENT}|(?P<comma>,)")
+
+
+def _decode_key(value: str) -> str:
+    if value.startswith('"'):
+        return ast.literal_eval(value)
+    if value.startswith("'"):
+        return value[1:-1]
+    return value
+
+
+def _parse_editable_config(content: str) -> dict:
+    """Read the simple table layout supported by the Python 3.10 editor."""
+    data: dict = {}
+    section = data
+    position = 0
+    message = "This config layout requires Python 3.11 or newer to edit tools safely."
+    for line in _SIMPLE_LINE.finditer(content):
+        if line.start() != position:
+            raise ValueError(message)
+        position = line.end()
+        if line["table"] is not None:
+            key = _decode_key(line["table"])
+            if key in data:
+                raise ValueError(message)
+            section = data[key] = {}
+        elif line["key"] is not None:
+            key = _decode_key(line["key"])
+            if key in section:
+                raise ValueError(message)
+            value = line["value"]
+            if value.startswith("["):
+                items = []
+                needs_item = True
+                for item in _SIMPLE_ARRAY_ITEMS.finditer(value):
+                    if item["string"] is not None and needs_item:
+                        items.append(_decode_key(item["string"]))
+                        needs_item = False
+                    elif item["comma"] is not None and not needs_item:
+                        needs_item = True
+                    elif item["string"] is not None or item["comma"] is not None:
+                        raise ValueError(message)
+                value = items
+            section[key] = value
+    if position != len(content):
+        raise ValueError(message)
+    return data
+
+
+def _replace_tools(content: str, tools: list[str], newline: str) -> str:
+    """Change only agentsync.tools, validating each candidate edit before writing."""
+    parse = tomllib.loads if tomllib is not None else _parse_editable_config
+    expected = parse(content)
+    section = expected.setdefault("agentsync", {})
+    if not isinstance(section, dict):
+        raise ValueError("agentsync must be a TOML table.")
+    if section.get("tools") == tools:
+        return content
+    had_tools = "tools" in section
+    section["tools"] = tools
+    replacement = json.dumps(tools, ensure_ascii=False)
+
+    def matches(candidate: str) -> bool:
+        try:
+            return parse(candidate) == expected
+        except (ValueError, SyntaxError):
+            return False
+
+    for token in _EDIT_TOKENS.finditer(content):
+        if had_tools and token["array"] is not None:
+            start, end = token.span("array")
+            candidate = content[:start] + replacement + content[end:]
+        elif not had_tools and token["table"] is not None:
+            start = token.start()
+            candidate = content[:start] + f"tools = {replacement}{newline}" + content[start:]
+        else:
+            continue
+        if matches(candidate):
+            return candidate
+
+    if not had_tools:
+        separator = "" if not content or content.endswith("\n") else newline
+        tail = f"{separator}tools = {replacement}{newline}"
+        new_table = f"{separator}[agentsync]{newline}tools = {replacement}{newline}"
+        for candidate in (content + tail, content + new_table):
+            if matches(candidate):
+                return candidate
+    raise ValueError("Could not edit agentsync.tools safely. Use an explicit tools array.")
+
+
+def write_config(
+    root: Path | None = None,
+    tools: list[str] | None = None,
+    *,
+    preserve_existing: bool = False,
+) -> None:
+    """Write a config, optionally preserving everything outside the tools array."""
     root = root or Path.cwd()
     config_path = root / CONFIG_FILE
     config_path.parent.mkdir(parents=True, exist_ok=True)
     content = DEFAULT_CONFIG
-    if tools:
-        tool_list = "\n".join(f'    "{t}",' for t in tools)
-        import re
-
-        content = re.sub(
-            r"tools = \[.*?\]",
-            f"tools = [\n{tool_list}\n]",
-            content,
-            flags=re.DOTALL,
-        )
-    config_path.write_text(content, encoding="utf-8")
+    if preserve_existing and config_path.exists():
+        content = config_path.read_bytes().decode("utf-8")
+    if tools is not None:
+        newline = "\r\n" if "\r\n" in content else "\n"
+        content = _replace_tools(content, tools, newline)
+    config_path.write_bytes(content.encode("utf-8"))
 
 
 def write_rules(content: str | None = None, root: Path | None = None) -> None:
