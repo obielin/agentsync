@@ -81,3 +81,20 @@ def test_generate_without_output_path_still_returns_config(project):
     assert get_tool("aider").generate(RULES) == (project / ".aider.conf.yml").read_text(
         encoding="utf-8"
     )
+
+
+def test_sync_updates_existing_generated_ignore_block(project):
+    ignore = project / ".gitignore"
+    ignore.write_bytes(
+        b"# agentsync generated files\r\n.aider.conf.yml\r\n\r\n# User patterns\r\nbuild/\r\n"
+    )
+    syncer = AgentSyncer(root=project)
+
+    assert syncer.sync().errors == 0
+    expected = (
+        b"# agentsync generated files\r\nCONVENTIONS.md\r\n.aider.conf.yml\r\n"
+        b"\r\n# User patterns\r\nbuild/\r\n"
+    )
+    assert ignore.read_bytes() == expected
+    assert syncer.sync().errors == 0
+    assert ignore.read_bytes() == expected
