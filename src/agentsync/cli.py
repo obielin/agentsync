@@ -119,6 +119,7 @@ def cmd_status(args) -> int:
 
 def cmd_diff(args) -> int:
     from difflib import unified_diff
+    from io import StringIO
 
     from agentsync import AgentSyncer
     from agentsync.config import is_initialised
@@ -140,8 +141,8 @@ def cmd_diff(args) -> int:
         if not result.changed or result.new_content is None:
             continue
         for line in unified_diff(
-            (result.old_content or "").splitlines(keepends=True),
-            result.new_content.splitlines(keepends=True),
+            StringIO(result.old_content or "", newline="\n").readlines(),
+            StringIO(result.new_content, newline="\n").readlines(),
             fromfile=result.output_path if result.old_content is not None else "/dev/null",
             tofile=result.output_path,
         ):

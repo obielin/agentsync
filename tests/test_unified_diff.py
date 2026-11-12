@@ -76,3 +76,14 @@ def test_diff_separates_line_without_final_newline(project, capsys):
     assert "\n-old rule\n\\ No newline at end of file\n" in output
     assert "\n+# Rules\n" in output
     assert snapshot(project) == before
+
+
+def test_diff_keeps_unicode_separator_in_the_same_line(project, capsys):
+    (project / "CLAUDE.md").write_text("# Rules\n- A\u2028B\n", encoding="utf-8")
+    write_rules("# Rules\n- A\u2028C\n", root=project)
+
+    assert cmd_diff(argparse.Namespace()) == 0
+    output = capsys.readouterr().out
+    assert "\n-- A\u2028B\n" in output
+    assert "\n+- A\u2028C\n" in output
+    assert "\\ No newline at end of file" not in output
