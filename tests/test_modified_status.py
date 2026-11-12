@@ -37,7 +37,11 @@ def test_status_detects_manual_edits(project, path, edit):
     changed = {
         "append": original + b"- Always use tabs.\n",
         "truncate": b"",
-        "line_endings": original.replace(b"\n", b"\r\n"),
+        "line_endings": (
+            original.replace(b"\r\n", b"\n")
+            if b"\r\n" in original
+            else original.replace(b"\n", b"\r\n")
+        ),
         "invalid_utf8": original + b"\xff",
     }[edit]
     output.write_bytes(changed)
@@ -48,6 +52,23 @@ def test_status_detects_manual_edits(project, path, edit):
     assert status[path] == "modified"
     assert all(value == "ok" for key, value in status.items() if key != path)
     assert snapshot(project) == before
+
+
+def test_sync_restores_generated_line_endings(project):
+    output = project / "CLAUDE.md"
+    original = output.read_bytes()
+    edited = (
+        original.replace(b"\r\n", b"\n")
+        if b"\r\n" in original
+        else original.replace(b"\n", b"\r\n")
+    )
+    output.write_bytes(edited)
+    syncer = AgentSyncer(root=project)
+
+    assert states(project)["CLAUDE.md"] == "modified"
+    assert syncer.sync().updated == 1
+    assert output.read_bytes() == original
+    assert states(project)["CLAUDE.md"] == "ok"
 
 
 def test_lock_records_each_output_content(project):
