@@ -200,13 +200,13 @@ def _parse_config_manual(config_path: Path, root: Path) -> AgentSyncConfig:
 def is_initialised(root: Path | None = None) -> bool:
     """Check if agentsync has been initialised in this directory."""
     root = root or Path.cwd()
-    return (root / CONFIG_FILE).exists() and (root / RULES_FILE).exists()
+    return (root / CONFIG_FILE).exists() and load_config(root).canonical_path.exists()
 
 
-def read_rules(root: Path | None = None) -> str:
+def read_rules(root: Path | None = None, *, canonical_path: Path | None = None) -> str:
     """Read the canonical rules file."""
     root = root or Path.cwd()
-    rules_path = root / RULES_FILE
+    rules_path = canonical_path or load_config(root).canonical_path
     if not rules_path.exists():
         raise FileNotFoundError(
             f"Rules file not found at {rules_path}. " "Run `agentsync init` first."
@@ -236,6 +236,6 @@ def write_config(root: Path | None = None, tools: list[str] | None = None) -> No
 def write_rules(content: str | None = None, root: Path | None = None) -> None:
     """Write the canonical rules file."""
     root = root or Path.cwd()
-    rules_path = root / RULES_FILE
+    rules_path = load_config(root).canonical_path
     rules_path.parent.mkdir(parents=True, exist_ok=True)
     rules_path.write_text(content or DEFAULT_RULES, encoding="utf-8")

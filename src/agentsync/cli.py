@@ -200,7 +200,7 @@ def cmd_adopt(args) -> int:
     Adopt existing rule files into agentsync management.
     Reads the most complete existing file and uses it as the canonical source.
     """
-    from agentsync.config import is_initialised, write_rules
+    from agentsync.config import is_initialised, load_config, write_rules
     from agentsync.tools import ALL_TOOLS
 
     root = Path.cwd()
@@ -227,7 +227,7 @@ def cmd_adopt(args) -> int:
     write_rules(content=best_content, root=root)
 
     print(f"\n{_ok('Adopted canonical rules from:')} {best_path}")
-    print(f"  Saved to: {_dim('.agentsync/rules.md')}")
+    print(f"  Saved to: {_dim(load_config(root).canonical)}")
     if len(candidates) > 1:
         print("\n  Other files found (not adopted):")
         for _, p, _ in candidates[1:]:
