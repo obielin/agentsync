@@ -22,6 +22,8 @@ class SyncResult:
     output_path: str
     status: str  # 'created' | 'updated' | 'unchanged' | 'skipped' | 'error'
     error: str = ""
+    old_content: str | None = None
+    new_content: str | None = None
 
     @property
     def changed(self) -> bool:
@@ -312,4 +314,6 @@ class AgentSyncer:
             tool_name=tool.name,
             output_path=rel_path,
             status=status,
+            old_content=existing if dry_run else None,
+            new_content=generated if dry_run else None,
         )
