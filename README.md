@@ -219,6 +219,10 @@ Now every commit automatically regenerates your rule files if the canonical sour
 
 agentsync translates this into the right format for each tool automatically.
 
+Set `canonical` in `.agentsync/config.toml` to use a different rules file. If an
+enabled tool already uses that file, sync leaves the source in place and only
+generates the other outputs.
+
 ---
 
 ## Why not just symlinks?
