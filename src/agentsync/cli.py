@@ -238,7 +238,7 @@ def cmd_adopt(args) -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        prog="agentsync",
+        prog="rulesync",
         description=(
             "One source of truth for all your AI coding agent rule files.\n"
             "Edit .agentsync/rules.md once. Generates AGENTS.md, CLAUDE.md,\n"
