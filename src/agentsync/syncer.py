@@ -117,22 +117,42 @@ def _write_lock(lock_path: Path, data: dict[str, Any]) -> None:
 
 
 def _update_gitignore(root: Path, paths_to_ignore: list[str]) -> None:
-    """Add generated paths to .gitignore if not already present."""
+    """Keep the agentsync block in .gitignore in step with the generated paths."""
     gitignore_path = root / ".gitignore"
     marker = "# agentsync generated files"
-    existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    existing = ""
+    if gitignore_path.exists():
+        # newline="" keeps the user's line endings intact on rewrite
+        with gitignore_path.open(encoding="utf-8", newline="") as f:
+            existing = f.read()
 
-    if marker in existing:
-        return
+    lines = existing.splitlines(keepends=True)
+    start = next((i for i, line in enumerate(lines) if line.rstrip("\r\n") == marker), None)
 
-    additions = ["\n", marker]
-    for p in paths_to_ignore:
-        if p not in existing:
-            additions.append(p)
-    additions.append("")
+    if start is None:
+        before, block, after = lines, [], []
+    else:
+        # The block runs from the marker to the next blank line or comment
+        end = start + 1
+        while end < len(lines) and lines[end].strip() and not lines[end].startswith("#"):
+            end += 1
+        before, after = lines[:start], lines[end:]
+        block = [line.rstrip("\r\n") for line in lines[start + 1 : end]]
 
-    with gitignore_path.open("a", encoding="utf-8") as f:
-        f.write("\n".join(additions))
+    outside = {line.strip() for line in before + after}
+    wanted = [p for p in dict.fromkeys(paths_to_ignore) if p not in outside]
+    # Keep existing order, drop removed tools, then append new paths
+    new_block = [p for p in block if p in wanted]
+    new_block += [p for p in wanted if p not in new_block]
+
+    eol = "\r\n" if "\r\n" in existing else "\n"
+    prefix = "".join(before) + (eol * 2 if start is None else "")
+    block_text = eol.join([marker, *new_block]) + eol
+    content = prefix + block_text + "".join(after)
+
+    if content != existing:
+        with gitignore_path.open("w", encoding="utf-8", newline="") as f:
+            f.write(content)
 
 
 class AgentSyncer:
