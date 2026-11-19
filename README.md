@@ -101,7 +101,7 @@ rulesync sync --dry-run
 rulesync init              # initialise in current project
 rulesync sync              # sync all tool files from canonical source
 rulesync sync --dry-run    # preview what would change
-rulesync diff              # alias for sync --dry-run
+rulesync diff              # show proposed rule file edits as a unified diff
 rulesync status            # check which files are out of sync
 rulesync add gemini_md     # add a new tool
 rulesync remove cursorrules  # remove a tool
