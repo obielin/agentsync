@@ -80,7 +80,7 @@ def cmd_sync(args) -> int:
         return 1
 
     syncer = AgentSyncer(root=root, verbose=args.verbose)
-    report = syncer.sync(dry_run=args.dry_run)
+    report = syncer.sync(dry_run=args.dry_run, force=getattr(args, "force", False))
     print(report.summary())
 
     if report.errors:
@@ -142,7 +142,7 @@ def cmd_diff(args) -> int:
         return 1
 
     syncer = AgentSyncer(root=root)
-    report = syncer.sync(dry_run=True)
+    report = syncer.sync(dry_run=True, force=True)
 
     if report.created == 0 and report.updated == 0:
         print(f"\n{_ok('No changes.')}\n")
@@ -298,6 +298,7 @@ Examples:
     p_sync = sub.add_parser("sync", help="Sync canonical rules to all tool files")
     p_sync.add_argument("--dry-run", "-n", action="store_true", help="Preview without writing")
     p_sync.add_argument("--verbose", "-v", action="store_true")
+    p_sync.add_argument("--force", action="store_true", help="Overwrite unmanaged rule files")
     p_sync.set_defaults(func=cmd_sync)
 
     # status
