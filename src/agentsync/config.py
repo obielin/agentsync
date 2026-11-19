@@ -141,14 +141,34 @@ class AgentSyncConfig:
         return f"AgentSyncConfig(tools={self.tools}, canonical={self.canonical!r})"
 
 
+class ConfigError(ValueError):
+    """A configuration file cannot be read or parsed safely."""
+
+
+def _config_from_data(data: dict, config_path: Path, root: Path) -> AgentSyncConfig:
+    cfg = AgentSyncConfig(root=root)
+    section = data.get("agentsync", {})
+    if not isinstance(section, dict):
+        raise ConfigError(f"Invalid config {config_path}: agentsync must be a table")
+    for name in ("version", "canonical", "tools", "auto_gitignore", "warn_unmanaged"):
+        if name not in section:
+            continue
+        value = section[name]
+        expected = type(getattr(cfg, name))
+        if type(value) is not expected or (
+            name == "tools" and any(not isinstance(tool, str) for tool in value)
+        ):
+            raise ConfigError(f"Invalid config {config_path}: invalid value for {name}")
+        setattr(cfg, name, value)
+    return cfg
+
+
 def load_config(root: Path | None = None) -> AgentSyncConfig:
     """Load agentsync config from .agentsync/config.toml."""
     root = root or Path.cwd()
     config_path = root / CONFIG_FILE
-    cfg = AgentSyncConfig(root=root)
-
     if not config_path.exists():
-        return cfg
+        return AgentSyncConfig(root=root)
 
     if tomllib is None:
         # Python 3.10 fallback — manual TOML parsing for our simple format
@@ -156,45 +176,113 @@ def load_config(root: Path | None = None) -> AgentSyncConfig:
 
     try:
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-        section = data.get("agentsync", {})
-        cfg.version = section.get("version", cfg.version)
-        cfg.canonical = section.get("canonical", cfg.canonical)
-        cfg.tools = section.get("tools", cfg.tools)
-        cfg.auto_gitignore = section.get("auto_gitignore", cfg.auto_gitignore)
-        cfg.warn_unmanaged = section.get("warn_unmanaged", cfg.warn_unmanaged)
-    except Exception:
-        pass
-
-    return cfg
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"Invalid config {config_path}: {exc}") from exc
+    return _config_from_data(data, config_path, root)
 
 
 def _parse_config_manual(config_path: Path, root: Path) -> AgentSyncConfig:
-    """Minimal TOML parser for Python 3.10 compatibility. Handles multiline arrays."""
+    """Parse the simple generated format on Python 3.10; reject unsupported syntax."""
+    import ast
     import re
 
-    cfg = AgentSyncConfig(root=root)
     try:
         text = config_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ConfigError(f"Invalid config {config_path}: {exc}") from exc
 
-        # Extract tools array — may span multiple lines: tools = [\n    "x",\n]
-        tools_match = re.search(r"tools\s*=\s*\[([^\]]*)\]", text, re.DOTALL)
-        if tools_match:
-            tools_block = tools_match.group(1)
-            tools = re.findall(r'"([^"]+)"', tools_block)
-            if tools:
-                cfg.tools = tools
+    # Match whole statements instead of extracting plausible settings from broken TOML.
+    string = (
+        r'"(?:[^"\\\x00-\x08\x0a-\x1f\x7f]|\\(?:["\\btnfr]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}))*"'
+        r"|'[^'\x00-\x08\x0a-\x1f\x7f]*'"
+    )
+    string_pattern = re.compile(string)
+    table_pattern = re.compile(r"\[([A-Za-z0-9_-]+)\]")
+    key_pattern = re.compile(r"([A-Za-z0-9_-]+)[ \t]*=[ \t]*")
+    pos = 0
 
-        for line in text.splitlines():
-            line = line.strip()
-            if line.startswith("canonical"):
-                parts = line.split("=", 1)
-                if len(parts) == 2:
-                    cfg.canonical = parts[1].strip().strip('"').strip("'")
-            elif line.startswith("auto_gitignore"):
-                cfg.auto_gitignore = "true" in line.lower()
-    except Exception:
-        pass
-    return cfg
+    def syntax_error() -> ConfigError:
+        line = text.count("\n", 0, pos) + 1
+        return ConfigError(
+            f"Invalid config {config_path} at line {line}: invalid or unsupported TOML. "
+            "Python 3.10 supports simple tables, bare keys, single-line strings, "
+            "booleans and string arrays; use Python 3.11+ for other TOML syntax."
+        )
+
+    def skip_space(multiline: bool = True) -> None:
+        nonlocal pos
+        while pos < len(text):
+            if text[pos] in (" \t\n" if multiline else " \t"):
+                pos += 1
+            elif text[pos] == "#":
+                end = text.find("\n", pos)
+                pos = len(text) if end == -1 else end
+            else:
+                break
+
+    def read_string() -> str:
+        nonlocal pos
+        match = string_pattern.match(text, pos)
+        if match is None:
+            raise syntax_error()
+        value = match.group()
+        try:
+            result = value[1:-1] if value.startswith("'") else ast.literal_eval(value)
+            # TOML unicode escapes must represent scalar values, not lone surrogates.
+            result.encode("utf-8")
+        except (ValueError, SyntaxError, UnicodeError) as exc:
+            raise syntax_error() from exc
+        pos = match.end()
+        return result
+
+    def read_value() -> str | bool | list[str]:
+        nonlocal pos
+        for literal, value in (("true", True), ("false", False)):
+            if text.startswith(literal, pos):
+                pos += len(literal)
+                return value
+        if not text.startswith("[", pos):
+            return read_string()
+        pos += 1
+        items = []
+        skip_space()
+        while not text.startswith("]", pos):
+            items.append(read_string())
+            skip_space()
+            if text.startswith(",", pos):
+                pos += 1
+                skip_space()
+            elif not text.startswith("]", pos):
+                raise syntax_error()
+        pos += 1
+        return items
+
+    data: dict = {}
+    section = data
+    skip_space()
+    while pos < len(text):
+        table_match = table_pattern.match(text, pos)
+        if table_match is not None:
+            table = table_match.group(1)
+            if table in data:
+                raise ConfigError(f"Invalid config {config_path}: duplicate table {table!r}")
+            section = data[table] = {}
+            pos = table_match.end()
+        else:
+            key_match = key_pattern.match(text, pos)
+            if key_match is None:
+                raise syntax_error()
+            key = key_match.group(1)
+            if key in section:
+                raise ConfigError(f"Invalid config {config_path}: duplicate key {key!r}")
+            pos = key_match.end()
+            section[key] = read_value()
+        skip_space(multiline=False)
+        if pos < len(text) and text[pos] != "\n":
+            raise syntax_error()
+        skip_space()
+
+    return _config_from_data(data, config_path, root)
 
 
 def is_initialised(root: Path | None = None) -> bool:
