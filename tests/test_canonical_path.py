@@ -4,7 +4,6 @@ import argparse
 
 import pytest
 
-import agentsync.config as config_module
 from agentsync import AgentSyncConfig, AgentSyncer, is_initialised
 from agentsync.cli import cmd_adopt, cmd_diff, cmd_init, cmd_status, cmd_sync
 from agentsync.config import CONFIG_FILE, RULES_FILE, read_rules, write_config, write_rules
@@ -12,10 +11,8 @@ from agentsync.config import CONFIG_FILE, RULES_FILE, read_rules, write_config, 
 CUSTOM_RULES = "# Team rules\n- Use tabs\n"
 
 
-@pytest.fixture(params=["stdlib", "fallback"])
-def custom_project(tmp_path, monkeypatch, request):
-    if request.param == "fallback":
-        monkeypatch.setattr(config_module, "tomllib", None)
+@pytest.fixture
+def custom_project(tmp_path):
     write_config(tmp_path, tools=["claude_md"])
     config_path = tmp_path / CONFIG_FILE
     config_path.write_text(

@@ -10,12 +10,6 @@ from agentsync import config
 from agentsync.cli import main
 
 
-@pytest.fixture(params=["native", "fallback"])
-def parser(request, monkeypatch):
-    if request.param == "fallback":
-        monkeypatch.setattr(config, "tomllib", None)
-
-
 def snapshot(root):
     return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
@@ -40,7 +34,7 @@ def snapshot(root):
         "[agentsync]\ntools = [\n" + '    "claude_md", # entry\n' * 100,
     ],
 )
-def test_invalid_config_names_file(tmp_path, parser, contents):
+def test_invalid_config_names_file(tmp_path, contents):
     path = tmp_path / config.CONFIG_FILE
     path.parent.mkdir()
     path.write_text(contents, encoding="utf-8")
@@ -52,7 +46,7 @@ def test_invalid_config_names_file(tmp_path, parser, contents):
 @pytest.mark.parametrize(
     "command", [["sync"], ["status"], ["diff"], ["add", "aider"], ["remove", "claude_md"]]
 )
-def test_cli_rejects_invalid_config_without_writes(tmp_path, monkeypatch, capsys, parser, command):
+def test_cli_rejects_invalid_config_without_writes(tmp_path, monkeypatch, capsys, command):
     config.write_config(tmp_path, tools=["claude_md"])
     config.write_rules("# Keep my rules\n", root=tmp_path)
     (tmp_path / config.CONFIG_FILE).write_text('[agentsync]\ntools = ["claude_md"\n')
@@ -89,7 +83,7 @@ def test_init_rejects_unknown_tools_before_writing(tmp_path, monkeypatch, capsys
     assert snapshot(tmp_path) == before
 
 
-def test_init_accepts_valid_tools_with_whitespace(tmp_path, monkeypatch, parser):
+def test_init_accepts_valid_tools_with_whitespace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["rulesync", "init", "--tools", "claude_md, copilot"])
     with pytest.raises(SystemExit) as exc:
@@ -98,7 +92,7 @@ def test_init_accepts_valid_tools_with_whitespace(tmp_path, monkeypatch, parser)
     assert config.load_config(tmp_path).tools == ["claude_md", "copilot"]
 
 
-def test_valid_settings_and_comments(tmp_path, parser):
+def test_valid_settings_and_comments(tmp_path):
     path = tmp_path / config.CONFIG_FILE
     path.parent.mkdir()
     path.write_text(
@@ -117,18 +111,18 @@ def test_valid_settings_and_comments(tmp_path, parser):
     assert cfg.warn_unmanaged is False
 
 
-def test_empty_tools_stay_empty(tmp_path, parser):
+def test_empty_tools_stay_empty(tmp_path):
     path = tmp_path / config.CONFIG_FILE
     path.parent.mkdir()
     path.write_text("[agentsync]\ntools = []\n")
     assert config.load_config(tmp_path).tools == []
 
 
-def test_missing_config_still_uses_defaults(tmp_path, parser):
+def test_missing_config_still_uses_defaults(tmp_path):
     assert config.load_config(tmp_path).tools == config.AgentSyncConfig().tools
 
 
-def test_invalid_encoding_names_file(tmp_path, parser):
+def test_invalid_encoding_names_file(tmp_path):
     path = tmp_path / config.CONFIG_FILE
     path.parent.mkdir()
     path.write_bytes(b"[agentsync]\n\xff")
@@ -137,7 +131,7 @@ def test_invalid_encoding_names_file(tmp_path, parser):
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
-def test_strings_and_unrelated_settings(tmp_path, parser, newline):
+def test_strings_and_unrelated_settings(tmp_path, newline):
     path = tmp_path / config.CONFIG_FILE
     path.parent.mkdir()
     path.write_bytes(
@@ -158,7 +152,7 @@ def test_strings_and_unrelated_settings(tmp_path, parser, newline):
     assert cfg.warn_unmanaged is False
 
 
-def test_unreadable_config_names_file(tmp_path, monkeypatch, parser):
+def test_unreadable_config_names_file(tmp_path, monkeypatch):
     config.write_config(tmp_path)
 
     def unreadable(*args, **kwargs):
@@ -169,10 +163,8 @@ def test_unreadable_config_names_file(tmp_path, monkeypatch, parser):
         config.load_config(tmp_path)
 
 
-def test_fallback_rejects_unsupported_syntax(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "tomllib", None)
+def test_multiline_canonical_value(tmp_path):
     path = tmp_path / config.CONFIG_FILE
     path.parent.mkdir()
     path.write_text('[agentsync]\ncanonical = """docs/rules.md"""\n')
-    with pytest.raises(ValueError, match=r"config\.toml.*Python 3\.11\+"):
-        config.load_config(tmp_path)
+    assert config.load_config(tmp_path).canonical == "docs/rules.md"

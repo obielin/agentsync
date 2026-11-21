@@ -1,22 +1,20 @@
 """
 Configuration management for agentsync.
 Reads/writes .agentsync/config.toml and .agentsync/rules.md
-Zero external dependencies — uses stdlib tomllib (Python 3.11+) with fallback.
+Uses tomllib on Python 3.11+ and its Tomli backport on Python 3.10.
 """
 
 from __future__ import annotations
 
-import sys
+import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-if sys.version_info >= (3, 11):
+try:
     import tomllib
-else:
-    try:
-        import tomllib  # type: ignore[no-redef]
-    except ImportError:
-        tomllib = None  # type: ignore[assignment]
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 AGENTSYNC_DIR = ".agentsync"
 CONFIG_FILE = ".agentsync/config.toml"
@@ -170,118 +168,10 @@ def load_config(root: Path | None = None) -> AgentSyncConfig:
     if not config_path.exists():
         return AgentSyncConfig(root=root)
 
-    if tomllib is None:
-        # Python 3.10 fallback — manual TOML parsing for our simple format
-        return _parse_config_manual(config_path, root)
-
     try:
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"Invalid config {config_path}: {exc}") from exc
-    return _config_from_data(data, config_path, root)
-
-
-def _parse_config_manual(config_path: Path, root: Path) -> AgentSyncConfig:
-    """Parse the simple generated format on Python 3.10; reject unsupported syntax."""
-    import ast
-    import re
-
-    try:
-        text = config_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise ConfigError(f"Invalid config {config_path}: {exc}") from exc
-
-    # Match whole statements instead of extracting plausible settings from broken TOML.
-    string = (
-        r'"(?:[^"\\\x00-\x08\x0a-\x1f\x7f]|\\(?:["\\btnfr]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}))*"'
-        r"|'[^'\x00-\x08\x0a-\x1f\x7f]*'"
-    )
-    string_pattern = re.compile(string)
-    table_pattern = re.compile(r"\[([A-Za-z0-9_-]+)\]")
-    key_pattern = re.compile(r"([A-Za-z0-9_-]+)[ \t]*=[ \t]*")
-    pos = 0
-
-    def syntax_error() -> ConfigError:
-        line = text.count("\n", 0, pos) + 1
-        return ConfigError(
-            f"Invalid config {config_path} at line {line}: invalid or unsupported TOML. "
-            "Python 3.10 supports simple tables, bare keys, single-line strings, "
-            "booleans and string arrays; use Python 3.11+ for other TOML syntax."
-        )
-
-    def skip_space(multiline: bool = True) -> None:
-        nonlocal pos
-        while pos < len(text):
-            if text[pos] in (" \t\n" if multiline else " \t"):
-                pos += 1
-            elif text[pos] == "#":
-                end = text.find("\n", pos)
-                pos = len(text) if end == -1 else end
-            else:
-                break
-
-    def read_string() -> str:
-        nonlocal pos
-        match = string_pattern.match(text, pos)
-        if match is None:
-            raise syntax_error()
-        value = match.group()
-        try:
-            result = value[1:-1] if value.startswith("'") else ast.literal_eval(value)
-            # TOML unicode escapes must represent scalar values, not lone surrogates.
-            result.encode("utf-8")
-        except (ValueError, SyntaxError, UnicodeError) as exc:
-            raise syntax_error() from exc
-        pos = match.end()
-        return result
-
-    def read_value() -> str | bool | list[str]:
-        nonlocal pos
-        for literal, value in (("true", True), ("false", False)):
-            if text.startswith(literal, pos):
-                pos += len(literal)
-                return value
-        if not text.startswith("[", pos):
-            return read_string()
-        pos += 1
-        items = []
-        skip_space()
-        while not text.startswith("]", pos):
-            items.append(read_string())
-            skip_space()
-            if text.startswith(",", pos):
-                pos += 1
-                skip_space()
-            elif not text.startswith("]", pos):
-                raise syntax_error()
-        pos += 1
-        return items
-
-    data: dict = {}
-    section = data
-    skip_space()
-    while pos < len(text):
-        table_match = table_pattern.match(text, pos)
-        if table_match is not None:
-            table = table_match.group(1)
-            if table in data:
-                raise ConfigError(f"Invalid config {config_path}: duplicate table {table!r}")
-            section = data[table] = {}
-            pos = table_match.end()
-        else:
-            key_match = key_pattern.match(text, pos)
-            if key_match is None:
-                raise syntax_error()
-            key = key_match.group(1)
-            if key in section:
-                raise ConfigError(f"Invalid config {config_path}: duplicate key {key!r}")
-            pos = key_match.end()
-            section[key] = read_value()
-        skip_space(multiline=False)
-        if pos < len(text) and text[pos] != "\n":
-            raise syntax_error()
-        skip_space()
-
     return _config_from_data(data, config_path, root)
 
 
@@ -302,23 +192,77 @@ def read_rules(root: Path | None = None, *, canonical_path: Path | None = None) 
     return rules_path.read_text(encoding="utf-8")
 
 
-def write_config(root: Path | None = None, tools: list[str] | None = None) -> None:
-    """Write a fresh config file."""
+_QUOTED_KEY = (
+    r"""(?:"(?:\\(?:["\\btnfr]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})|[^"\\\r\n])*"|'[^'\r\n]*')"""
+)
+_STRINGS = r'(?:"""(?:\\.|(?!""").)*"{3,5}' r"|'''(?:(?!''').)*'{3,5}" rf"|{_QUOTED_KEY})"
+_COMMENT = r"#[^\r\n]*"
+_ARRAY = rf"\[(?:{_STRINGS}|{_COMMENT}|[ \t\r\n,])*\]"
+_EDIT_TOKENS = re.compile(
+    rf"(?P<table>^[ \t]*\[[^\r\n]+\][ \t]*(?:{_COMMENT})?\r?$)"
+    rf"|(?<![A-Za-z0-9_-])(?:tools|{_QUOTED_KEY})[ \t]*=[ \t]*(?P<array>{_ARRAY})"
+    rf"|{_COMMENT}|{_STRINGS}",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _replace_tools(content: str, tools: list[str], newline: str) -> str:
+    """Change only agentsync.tools, validating each candidate edit before writing."""
+    expected = tomllib.loads(content)
+    section = expected.setdefault("agentsync", {})
+    if not isinstance(section, dict):
+        raise ValueError("agentsync must be a TOML table.")
+    if section.get("tools") == tools:
+        return content
+    had_tools = "tools" in section
+    section["tools"] = tools
+    replacement = json.dumps(tools, ensure_ascii=False)
+
+    def matches(candidate: str) -> bool:
+        try:
+            return tomllib.loads(candidate) == expected
+        except tomllib.TOMLDecodeError:
+            return False
+
+    for token in _EDIT_TOKENS.finditer(content):
+        if had_tools and token["array"] is not None:
+            start, end = token.span("array")
+            candidate = content[:start] + replacement + content[end:]
+        elif not had_tools and token["table"] is not None:
+            start = token.start()
+            candidate = content[:start] + f"tools = {replacement}{newline}" + content[start:]
+        else:
+            continue
+        if matches(candidate):
+            return candidate
+
+    if not had_tools:
+        separator = "" if not content or content.endswith("\n") else newline
+        tail = f"{separator}tools = {replacement}{newline}"
+        new_table = f"{separator}[agentsync]{newline}tools = {replacement}{newline}"
+        for candidate in (content + tail, content + new_table):
+            if matches(candidate):
+                return candidate
+    raise ValueError("Could not edit agentsync.tools safely. Use an explicit tools array.")
+
+
+def write_config(
+    root: Path | None = None,
+    tools: list[str] | None = None,
+    *,
+    preserve_existing: bool = False,
+) -> None:
+    """Write a config, optionally preserving everything outside the tools array."""
     root = root or Path.cwd()
     config_path = root / CONFIG_FILE
     config_path.parent.mkdir(parents=True, exist_ok=True)
     content = DEFAULT_CONFIG
-    if tools:
-        tool_list = "\n".join(f'    "{t}",' for t in tools)
-        import re
-
-        content = re.sub(
-            r"tools = \[.*?\]",
-            f"tools = [\n{tool_list}\n]",
-            content,
-            flags=re.DOTALL,
-        )
-    config_path.write_text(content, encoding="utf-8")
+    if preserve_existing and config_path.exists():
+        content = config_path.read_bytes().decode("utf-8")
+    if tools is not None:
+        newline = "\r\n" if "\r\n" in content else "\n"
+        content = _replace_tools(content, tools, newline)
+    config_path.write_bytes(content.encode("utf-8"))
 
 
 def write_rules(content: str | None = None, root: Path | None = None) -> None:

@@ -4,7 +4,6 @@
 
 [![Tests](https://img.shields.io/badge/Tests-53%20passing-brightgreen?style=flat-square)](tests/)
 [![PyPI](https://img.shields.io/pypi/v/agentsync?style=flat-square)](https://pypi.org/project/agentsync/)
-[![Dependencies](https://img.shields.io/badge/Dependencies-zero-brightgreen?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![LinkedIn](https://img.shields.io/badge/-Linda_Oraegbunam-blue?logo=linkedin&style=flat-square)](https://www.linkedin.com/in/linda-oraegbunam/)
@@ -69,7 +68,7 @@ rulesync sync
 pip install rulesync
 ```
 
-Zero dependencies. Pure Python 3.10+.
+Requires Python 3.10 or newer. Installation includes Tomli on Python 3.10.
 
 ---
 
@@ -195,10 +194,8 @@ exit code 1 and an error naming the file. Fix the settings before syncing; inval
 settings do not fall back to the default tool list. `rulesync init --tools` also
 rejects unknown or empty tool IDs before writing files, including with `--force`.
 
-Python 3.10's dependency-free configuration reader supports the generated format:
-simple tables and bare keys, single-line quoted strings, booleans, and string arrays
-(including multiline arrays and comments). It rejects unsupported syntax with an
-error; use Python 3.11+ for the full TOML syntax supported by `tomllib`.
+`rulesync add` and `rulesync remove` edit the tool list in the existing configuration
+and preserve the other settings.
 
 ---
 
