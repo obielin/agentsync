@@ -141,7 +141,7 @@ class TestGenerators:
             for output_path in tool.output_paths:
                 result = tool.generate(SAMPLE_RULES, output_path=output_path)
                 if output_path == ".aider.conf.yml":
-                    assert "read: CONVENTIONS.md" in result
+                    assert "read: .agentsync/aider-conventions.md" in result
                 else:
                     assert "Stack" in result or "stack" in result.lower()
 
