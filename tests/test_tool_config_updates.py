@@ -59,21 +59,15 @@ def test_tool_changes_preserve_other_config(
     assert after.endswith(suffix)
 
 
-@pytest.mark.parametrize("fallback", [False, True])
-def test_remove_last_tool_keeps_empty_list(tmp_path, monkeypatch, fallback):
+def test_remove_last_tool_keeps_empty_list(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    if fallback:
-        monkeypatch.setattr(config_module, "tomllib", None)
     write_config(tmp_path, tools=["claude_md"])
 
     assert cmd_remove(argparse.Namespace(tool="claude_md")) == 0
     assert load_config(tmp_path).tools == []
 
 
-@pytest.mark.parametrize("fallback", [False, True])
-def test_write_config_accepts_empty_tools(tmp_path, monkeypatch, fallback):
-    if fallback:
-        monkeypatch.setattr(config_module, "tomllib", None)
+def test_write_config_accepts_empty_tools(tmp_path):
     write_config(tmp_path, tools=[])
     assert load_config(tmp_path).tools == []
 
@@ -112,7 +106,6 @@ def test_add_preserves_multiline_strings_with_config_examples(tmp_path, monkeypa
     assert after.endswith(suffix)
 
 
-@pytest.mark.skipif(config_module.tomllib is None, reason="requires the native TOML parser")
 @pytest.mark.parametrize(
     "content",
     [
@@ -143,19 +136,6 @@ def test_tool_changes_preserve_alternate_toml_layouts(
     prefix, suffix = content.split('["claude_md"]')
     assert result.startswith(prefix)
     assert result.endswith(suffix)
-
-
-def test_fallback_leaves_unsupported_layout_untouched(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(config_module, "tomllib", None)
-    config_path = tmp_path / CONFIG_FILE
-    config_path.parent.mkdir()
-    content = b'agentsync.tools = ["claude_md"]\r\n'
-    config_path.write_bytes(content)
-
-    assert cmd_add(argparse.Namespace(tool="aider")) == 1
-    assert config_path.read_bytes() == content
-    assert "Python 3.11" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

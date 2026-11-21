@@ -8,7 +8,7 @@ agentsync generates AGENTS.md, CLAUDE.md, .cursorrules,
 .cursor/rules/main.mdc, .github/copilot-instructions.md,
 GEMINI.md, and .windsurfrules automatically.
 
-Zero dependencies. Pure Python 3.10+.
+Pure Python 3.10+, with Tomli installed on Python 3.10.
 
 Quick start:
     agentsync init        # set up in current project

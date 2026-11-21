@@ -1,25 +1,20 @@
 """
 Configuration management for agentsync.
 Reads/writes .agentsync/config.toml and .agentsync/rules.md
-Zero external dependencies — uses stdlib tomllib (Python 3.11+) with fallback.
+Uses tomllib on Python 3.11+ and its Tomli backport on Python 3.10.
 """
 
 from __future__ import annotations
 
-import ast
 import json
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-if sys.version_info >= (3, 11):
+try:
     import tomllib
-else:
-    try:
-        import tomllib  # type: ignore[no-redef]
-    except ImportError:
-        tomllib = None  # type: ignore[assignment]
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 AGENTSYNC_DIR = ".agentsync"
 CONFIG_FILE = ".agentsync/config.toml"
@@ -144,73 +139,52 @@ class AgentSyncConfig:
         return f"AgentSyncConfig(tools={self.tools}, canonical={self.canonical!r})"
 
 
+class ConfigError(ValueError):
+    """A configuration file cannot be read or parsed safely."""
+
+
+def _config_from_data(data: dict, config_path: Path, root: Path) -> AgentSyncConfig:
+    cfg = AgentSyncConfig(root=root)
+    section = data.get("agentsync", {})
+    if not isinstance(section, dict):
+        raise ConfigError(f"Invalid config {config_path}: agentsync must be a table")
+    for name in ("version", "canonical", "tools", "auto_gitignore", "warn_unmanaged"):
+        if name not in section:
+            continue
+        value = section[name]
+        expected = type(getattr(cfg, name))
+        if type(value) is not expected or (
+            name == "tools" and any(not isinstance(tool, str) for tool in value)
+        ):
+            raise ConfigError(f"Invalid config {config_path}: invalid value for {name}")
+        setattr(cfg, name, value)
+    return cfg
+
+
 def load_config(root: Path | None = None) -> AgentSyncConfig:
     """Load agentsync config from .agentsync/config.toml."""
     root = root or Path.cwd()
     config_path = root / CONFIG_FILE
-    cfg = AgentSyncConfig(root=root)
-
     if not config_path.exists():
-        return cfg
-
-    if tomllib is None:
-        # Python 3.10 fallback — manual TOML parsing for our simple format
-        return _parse_config_manual(config_path, root)
+        return AgentSyncConfig(root=root)
 
     try:
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-        section = data.get("agentsync", {})
-        cfg.version = section.get("version", cfg.version)
-        cfg.canonical = section.get("canonical", cfg.canonical)
-        cfg.tools = section.get("tools", cfg.tools)
-        cfg.auto_gitignore = section.get("auto_gitignore", cfg.auto_gitignore)
-        cfg.warn_unmanaged = section.get("warn_unmanaged", cfg.warn_unmanaged)
-    except Exception:
-        pass
-
-    return cfg
-
-
-def _parse_config_manual(config_path: Path, root: Path) -> AgentSyncConfig:
-    """Minimal TOML parser for Python 3.10 compatibility. Handles multiline arrays."""
-    cfg = AgentSyncConfig(root=root)
-    try:
-        text = config_path.read_text(encoding="utf-8")
-
-        try:
-            section = _parse_editable_config(text).get("agentsync", {})
-        except (SyntaxError, ValueError):
-            # Keep the existing reader's best-effort behavior for complex files.
-            # The editor requires a complete parse before making any changes.
-            tools_match = re.search(r"tools\s*=\s*\[([^\]]*)\]", text, re.DOTALL)
-            if tools_match:
-                cfg.tools = re.findall(r'"([^"]+)"', tools_match.group(1))
-        else:
-            cfg.tools = section.get("tools", cfg.tools)
-
-        for line in text.splitlines():
-            line = line.strip()
-            if line.startswith("canonical"):
-                parts = line.split("=", 1)
-                if len(parts) == 2:
-                    cfg.canonical = parts[1].strip().strip('"').strip("'")
-            elif line.startswith("auto_gitignore"):
-                cfg.auto_gitignore = "true" in line.lower()
-    except Exception:
-        pass
-    return cfg
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"Invalid config {config_path}: {exc}") from exc
+    return _config_from_data(data, config_path, root)
 
 
 def is_initialised(root: Path | None = None) -> bool:
     """Check if agentsync has been initialised in this directory."""
     root = root or Path.cwd()
-    return (root / CONFIG_FILE).exists() and (root / RULES_FILE).exists()
+    return (root / CONFIG_FILE).exists() and load_config(root).canonical_path.exists()
 
 
-def read_rules(root: Path | None = None) -> str:
+def read_rules(root: Path | None = None, *, canonical_path: Path | None = None) -> str:
     """Read the canonical rules file."""
     root = root or Path.cwd()
-    rules_path = root / RULES_FILE
+    rules_path = canonical_path or load_config(root).canonical_path
     if not rules_path.exists():
         raise FileNotFoundError(
             f"Rules file not found at {rules_path}. " "Run `agentsync init` first."
@@ -230,67 +204,11 @@ _EDIT_TOKENS = re.compile(
     rf"|{_COMMENT}|{_STRINGS}",
     re.MULTILINE | re.DOTALL,
 )
-_SIMPLE_KEY = rf"(?:[A-Za-z0-9_-]+|{_QUOTED_KEY})"
-_SIMPLE_ARRAY = rf"\[(?:{_QUOTED_KEY}|{_COMMENT}|[ \t\r\n,])*\]"
-_SIMPLE_LINE = re.compile(
-    rf"[ \t]*(?:\[(?P<table>{_SIMPLE_KEY})\]"
-    rf"|(?P<key>{_SIMPLE_KEY})[ \t]*=[ \t]*(?P<value>{_SIMPLE_ARRAY}|{_QUOTED_KEY}|true|false))?"
-    rf"[ \t]*(?:{_COMMENT})?(?:\r?\n|$)",
-    re.DOTALL,
-)
-_SIMPLE_ARRAY_ITEMS = re.compile(rf"(?P<string>{_QUOTED_KEY})|{_COMMENT}|(?P<comma>,)")
-
-
-def _decode_key(value: str) -> str:
-    if value.startswith('"'):
-        return ast.literal_eval(value)
-    if value.startswith("'"):
-        return value[1:-1]
-    return value
-
-
-def _parse_editable_config(content: str) -> dict:
-    """Read the simple table layout supported by the Python 3.10 editor."""
-    data: dict = {}
-    section = data
-    position = 0
-    message = "This config layout requires Python 3.11 or newer to edit tools safely."
-    for line in _SIMPLE_LINE.finditer(content):
-        if line.start() != position:
-            raise ValueError(message)
-        position = line.end()
-        if line["table"] is not None:
-            key = _decode_key(line["table"])
-            if key in data:
-                raise ValueError(message)
-            section = data[key] = {}
-        elif line["key"] is not None:
-            key = _decode_key(line["key"])
-            if key in section:
-                raise ValueError(message)
-            value = line["value"]
-            if value.startswith("["):
-                items = []
-                needs_item = True
-                for item in _SIMPLE_ARRAY_ITEMS.finditer(value):
-                    if item["string"] is not None and needs_item:
-                        items.append(_decode_key(item["string"]))
-                        needs_item = False
-                    elif item["comma"] is not None and not needs_item:
-                        needs_item = True
-                    elif item["string"] is not None or item["comma"] is not None:
-                        raise ValueError(message)
-                value = items
-            section[key] = value
-    if position != len(content):
-        raise ValueError(message)
-    return data
 
 
 def _replace_tools(content: str, tools: list[str], newline: str) -> str:
     """Change only agentsync.tools, validating each candidate edit before writing."""
-    parse = tomllib.loads if tomllib is not None else _parse_editable_config
-    expected = parse(content)
+    expected = tomllib.loads(content)
     section = expected.setdefault("agentsync", {})
     if not isinstance(section, dict):
         raise ValueError("agentsync must be a TOML table.")
@@ -302,8 +220,8 @@ def _replace_tools(content: str, tools: list[str], newline: str) -> str:
 
     def matches(candidate: str) -> bool:
         try:
-            return parse(candidate) == expected
-        except (ValueError, SyntaxError):
+            return tomllib.loads(candidate) == expected
+        except tomllib.TOMLDecodeError:
             return False
 
     for token in _EDIT_TOKENS.finditer(content):
@@ -350,6 +268,6 @@ def write_config(
 def write_rules(content: str | None = None, root: Path | None = None) -> None:
     """Write the canonical rules file."""
     root = root or Path.cwd()
-    rules_path = root / RULES_FILE
+    rules_path = load_config(root).canonical_path
     rules_path.parent.mkdir(parents=True, exist_ok=True)
     rules_path.write_text(content or DEFAULT_RULES, encoding="utf-8")

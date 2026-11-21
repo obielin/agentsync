@@ -4,7 +4,6 @@
 
 [![Tests](https://img.shields.io/badge/Tests-53%20passing-brightgreen?style=flat-square)](tests/)
 [![PyPI](https://img.shields.io/pypi/v/agentsync?style=flat-square)](https://pypi.org/project/agentsync/)
-[![Dependencies](https://img.shields.io/badge/Dependencies-zero-brightgreen?style=flat-square)](pyproject.toml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![LinkedIn](https://img.shields.io/badge/-Linda_Oraegbunam-blue?logo=linkedin&style=flat-square)](https://www.linkedin.com/in/linda-oraegbunam/)
@@ -69,7 +68,7 @@ rulesync sync
 pip install rulesync
 ```
 
-Zero dependencies. Pure Python 3.10+.
+Requires Python 3.10 or newer. Installation includes Tomli on Python 3.10.
 
 ---
 
@@ -101,7 +100,7 @@ rulesync sync --dry-run
 rulesync init              # initialise in current project
 rulesync sync              # sync all tool files from canonical source
 rulesync sync --dry-run    # preview what would change
-rulesync diff              # alias for sync --dry-run
+rulesync diff              # show proposed rule file edits as a unified diff
 rulesync status            # check which files are out of sync
 rulesync add gemini_md     # add a new tool
 rulesync remove cursorrules  # remove a tool
@@ -190,6 +189,14 @@ Now every commit automatically regenerates your rule files if the canonical sour
 
 `rulesync status` exits with code 1 if any files are stale or missing — perfect for PR checks.
 
+Invalid `.agentsync/config.toml` files stop configuration-dependent commands with
+exit code 1 and an error naming the file. Fix the settings before syncing; invalid
+settings do not fall back to the default tool list. `rulesync init --tools` also
+rejects unknown or empty tool IDs before writing files, including with `--force`.
+
+`rulesync add` and `rulesync remove` edit the tool list in the existing configuration
+and preserve the other settings.
+
 ---
 
 ## The canonical format
@@ -218,6 +225,10 @@ Now every commit automatically regenerates your rule files if the canonical sour
 ```
 
 agentsync translates this into the right format for each tool automatically.
+
+Set `canonical` in `.agentsync/config.toml` to use a different rules file. If an
+enabled tool already uses that file, sync leaves the source in place and only
+generates the other outputs.
 
 ---
 
